@@ -1,0 +1,26 @@
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+
+# Virtual environment
+.venv/
+venv/
+
+# Git
+.git/
+.gitignore
+
+# Not needed in image
+notebooks/
+tests/
+configs/
+data/
+
+# Local system files
+.DS_Store
+
+
+# IDE
+.vscode/
+.idea/
