@@ -10,7 +10,7 @@ from pathlib import Path
 # ============================
 API_URL = os.environ.get(
     "API_URL",
-    "http://13.232.144.164:8000/predict"
+    "http://127.0.0.1:8000/predict"
 )
 
 S3_BUCKET = os.getenv(
