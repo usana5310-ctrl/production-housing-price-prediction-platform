@@ -16,7 +16,7 @@ import pandas as pd
 from joblib import load
 
 # Import preprocessing + feature engineering helpers
-from src.feature_pipeline.preprocess import clean_and_merge, drop_duplicates, remove_outliers
+from src.feature_pipeline.preprocess import  drop_duplicates, remove_outliers
 from src.feature_pipeline.feature_engineering import add_date_features, drop_unused_columns
 
 # ----------------------------
@@ -50,8 +50,12 @@ def predict(
     target_encoder_path: Path | str = DEFAULT_TARGET_ENCODER,
 ) -> pd.DataFrame:
     # Step 1: Preprocess raw input
-    df = clean_and_merge(input_df)
-    df = drop_duplicates(df)
+    if "lat" not in input_df.columns or "lng" not in input_df.columns:
+        from src.feature_pipeline.preprocess import clean_and_merge
+        df = clean_and_merge(input_df)
+    else:
+        print("✅ Using existing lat/lng columns")
+    df = drop_duplicates(input_df)
     df = remove_outliers(df)
 
     # Step 2: Feature engineering

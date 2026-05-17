@@ -3,26 +3,14 @@ import pandas as pd
 import requests
 import plotly.express as px
 import boto3, os
-import numpy as np
 from pathlib import Path
 
 # ============================
 # Config
 # ============================
-API_URL = os.environ.get(
-    "API_URL",
-    "http://127.0.0.1:8000/predict"
-)
-
-S3_BUCKET = os.getenv(
-    "S3_BUCKET",
-    "production-housing-price-prediction-platform-data"
-)
-
-REGION = os.getenv(
-    "AWS_REGION",
-    "ap-south-1"
-)
+API_URL = os.environ.get("API_URL", "http://127.0.0.1:8000/predict")
+S3_BUCKET = os.getenv("S3_BUCKET", "production-housing-price-prediction-platform-data")
+REGION = os.getenv("AWS_REGION", "ap-south-1")
 
 s3 = boto3.client("s3", region_name=REGION)
 
@@ -44,41 +32,6 @@ HOLDOUT_META_PATH = load_from_s3(
     "processed/cleaning_holdout.csv",
     "data/processed/cleaning_holdout.csv"
 )
-
-# ============================
-# Helper function to clean data for JSON serialization
-# ============================
-def clean_for_json(df):
-    """Replace infinite and NaN values with None for JSON serialization."""
-    df = df.copy()
-    # Replace infinity with None
-    df = df.replace([np.inf, -np.inf], None)
-    # Replace NaN with None
-    df = df.where(pd.notnull(df), None)
-    
-    # Convert to dictionary with proper types
-    records = []
-    for idx in range(len(df)):
-        record = {}
-        for col in df.columns:
-            value = df.iloc[idx][col]
-            # Handle numpy numeric types
-            if pd.isna(value):
-                record[col] = None
-            elif isinstance(value, (np.integer, np.int64, np.int32)):
-                record[col] = int(value)
-            elif isinstance(value, (np.floating, np.float64, np.float32)):
-                # Check for infinity again after conversion
-                if np.isinf(value) or np.isnan(value):
-                    record[col] = None
-                else:
-                    record[col] = float(value)
-            elif isinstance(value, (np.bool_)):
-                record[col] = bool(value)
-            else:
-                record[col] = value
-        records.append(record)
-    return records
 
 # ============================
 # Data loading
@@ -104,21 +57,6 @@ def load_data():
     return fe, disp
 
 fe_df, disp_df = load_data()
-
-# ============================
-# Data validation function
-# ============================
-def validate_data(df):
-    """Check for problematic values in the dataframe."""
-    issues = []
-    for col in df.columns:
-        if df[col].isna().any():
-            issues.append(f"{col}: {df[col].isna().sum()} NaN values")
-        if df[col].dtype in ['float64', 'float32']:
-            if np.isinf(df[col]).any():
-                inf_count = np.isinf(df[col]).sum()
-                issues.append(f"{col}: {inf_count} infinite values")
-    return issues
 
 # ============================
 # UI
@@ -148,19 +86,8 @@ if st.button("Show Predictions 🚀"):
         st.warning("No data found for these filters.")
     else:
         st.write(f"📅 Running predictions for **{year}-{month:02d}** | Region: **{region}**")
-        
-        # Get the filtered feature data
-        filtered_fe_df = fe_df.loc[idx].copy()
-        
-        # Validate the data before sending
-        issues = validate_data(filtered_fe_df)
-        if issues:
-            st.warning(f"Found data issues in {len(issues)} columns. Cleaning data before sending...")
-            for issue in issues:
-                st.text(f"  - {issue}")
-        
-        # Clean the data for JSON serialization
-        payload = clean_for_json(filtered_fe_df)
+
+        payload = fe_df.loc[idx].to_dict(orient="records")
 
         try:
             resp = requests.post(API_URL, json=payload, timeout=60)
@@ -176,30 +103,24 @@ if st.button("Show Predictions 🚀"):
             if actuals is not None and len(actuals) == len(view):
                 view["actual_price"] = pd.Series(actuals, index=view.index).astype(float)
 
-            # Remove any NaN values from metrics calculation
-            view_clean = view.dropna(subset=["prediction", "actual_price"])
-            
-            if len(view_clean) > 0:
-                # Metrics
-                mae = (view_clean["prediction"] - view_clean["actual_price"]).abs().mean()
-                rmse = ((view_clean["prediction"] - view_clean["actual_price"]) ** 2).mean() ** 0.5
-                avg_pct_error = ((view_clean["prediction"] - view_clean["actual_price"]).abs() / view_clean["actual_price"]).mean() * 100
+            # Metrics
+            mae = (view["prediction"] - view["actual_price"]).abs().mean()
+            rmse = ((view["prediction"] - view["actual_price"]) ** 2).mean() ** 0.5
+            avg_pct_error = ((view["prediction"] - view["actual_price"]).abs() / view["actual_price"]).mean() * 100
 
-                st.subheader("Predictions vs Actuals")
-                st.dataframe(
-                    view[["date", "region", "actual_price", "prediction"]].reset_index(drop=True),
-                    use_container_width=True
-                )
+            st.subheader("Predictions vs Actuals")
+            st.dataframe(
+                view[["date", "region", "actual_price", "prediction"]].reset_index(drop=True),
+                use_container_width=True
+            )
 
-                c1, c2, c3 = st.columns(3)
-                with c1:
-                    st.metric("MAE", f"{mae:,.0f}")
-                with c2:
-                    st.metric("RMSE", f"{rmse:,.0f}")
-                with c3:
-                    st.metric("Avg % Error", f"{avg_pct_error:.2f}%")
-            else:
-                st.warning("No valid data for metrics calculation after cleaning.")
+            c1, c2, c3 = st.columns(3)
+            with c1:
+                st.metric("MAE", f"{mae:,.0f}")
+            with c2:
+                st.metric("RMSE", f"{rmse:,.0f}")
+            with c3:
+                st.metric("Avg % Error", f"{avg_pct_error:.2f}%")
 
             # ============================
             # Yearly Trend Chart
@@ -207,10 +128,7 @@ if st.button("Show Predictions 🚀"):
             if region == "All":
                 yearly_data = disp_df[disp_df["year"] == year].copy()
                 idx_all = yearly_data.index
-                filtered_all_fe_df = fe_df.loc[idx_all].copy()
-                
-                # Clean data for API
-                payload_all = clean_for_json(filtered_all_fe_df)
+                payload_all = fe_df.loc[idx_all].to_dict(orient="records")
 
                 resp_all = requests.post(API_URL, json=payload_all, timeout=60)
                 resp_all.raise_for_status()
@@ -221,10 +139,7 @@ if st.button("Show Predictions 🚀"):
             else:
                 yearly_data = disp_df[(disp_df["year"] == year) & (disp_df["region"] == region)].copy()
                 idx_region = yearly_data.index
-                filtered_region_fe_df = fe_df.loc[idx_region].copy()
-                
-                # Clean data for API
-                payload_region = clean_for_json(filtered_region_fe_df)
+                payload_region = fe_df.loc[idx_region].to_dict(orient="records")
 
                 resp_region = requests.post(API_URL, json=payload_region, timeout=60)
                 resp_region.raise_for_status()
@@ -232,43 +147,34 @@ if st.button("Show Predictions 🚀"):
 
                 yearly_data["prediction"] = pd.Series(preds_region, index=yearly_data.index).astype(float)
 
-            # Remove NaN values for plotting
-            yearly_data_clean = yearly_data.dropna(subset=["actual_price", "prediction"])
-            
-            if len(yearly_data_clean) > 0:
-                # Aggregate by month
-                monthly_avg = yearly_data_clean.groupby("month")[["actual_price", "prediction"]].mean().reset_index()
+            # Aggregate by month
+            monthly_avg = yearly_data.groupby("month")[["actual_price", "prediction"]].mean().reset_index()
 
-                # Highlight selected month
-                monthly_avg["highlight"] = monthly_avg["month"].apply(lambda m: "Selected" if m == month else "Other")
+            # Highlight selected month
+            monthly_avg["highlight"] = monthly_avg["month"].apply(lambda m: "Selected" if m == month else "Other")
 
-                fig = px.line(
-                    monthly_avg,
-                    x="month",
-                    y=["actual_price", "prediction"],
-                    markers=True,
-                    labels={"value": "Price", "month": "Month"},
-                    title=f"Yearly Trend — {year}{'' if region=='All' else f' — {region}'}"
-                )
+            fig = px.line(
+                monthly_avg,
+                x="month",
+                y=["actual_price", "prediction"],
+                markers=True,
+                labels={"value": "Price", "month": "Month"},
+                title=f"Yearly Trend — {year}{'' if region=='All' else f' — {region}'}"
+            )
 
-                # Add highlight with background shading
-                highlight_month = month
-                fig.add_vrect(
-                    x0=highlight_month - 0.5,
-                    x1=highlight_month + 0.5,
-                    fillcolor="red",
-                    opacity=0.1,
-                    layer="below",
-                    line_width=0,
-                )
+            # Add highlight with background shading
+            highlight_month = month
+            fig.add_vrect(
+                x0=highlight_month - 0.5,
+                x1=highlight_month + 0.5,
+                fillcolor="red",
+                opacity=0.1,
+                layer="below",
+                line_width=0,
+            )
 
-                st.plotly_chart(fig, use_container_width=True)
-            else:
-                st.warning("No valid data available for the yearly trend chart.")
+            st.plotly_chart(fig, use_container_width=True)
 
-        except requests.exceptions.JSONDecodeError as e:
-            st.error(f"Failed to parse API response: {e}")
-            st.info("The API might be returning an invalid response. Check the API logs.")
         except Exception as e:
             st.error(f"API call failed: {e}")
             st.exception(e)
